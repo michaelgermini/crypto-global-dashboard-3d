@@ -1,34 +1,34 @@
 ## Crypto Global Dashboard 3D
 
-Interface 3D immersive d'inspiration Tron/Cyberpunk pour visualiser l'activité crypto mondiale, intégrée dans Streamlit et propulsée par Three.js (embarqué via HTML).
+Immersive 3D interface inspired by Tron/Cyberpunk to visualize global crypto activity, built with Streamlit and powered by embedded Three.js.
 
 ### Demo
 
 - Live: https://crypto-global-dashboard-3d.streamlit.app/
 
-### Lancer localement
+### Run locally
 
-1. Créez un environnement Python 3.10+ (recommandé)
-2. Installez les dépendances:
+1. Create a Python 3.10+ environment (recommended)
+2. Install dependencies:
 ```bash
 pip install -r requirements.txt
 ```
-3. Lancez l'app:
+3. Start the app:
 ```bash
 streamlit run streamlit_app.py
 ```
 
-### Fonctionnalités
-- Globe 3D rotatif avec points lumineux sur les hubs économiques (survol interactif)
-- Liens animés entre hubs majeurs, particules et glow atmosphérique
-- Panneaux latéraux:
-  - Top 10 cryptos (avec sparklines 24h)
-  - Courbes 24h BTC/ETH/SOL normalisées
-  - Indicateurs globaux (market cap, volume 24h)
+### Features
+- Rotating 3D globe with glowing city hubs (interactive hover)
+- Animated links between major hubs, particles and atmospheric glow
+- Side panels:
+  - Top 10 cryptos (with 24h sparklines)
+  - 24h lines for BTC/ETH/SOL
+  - Global indicators (market cap, 24h volume)
 
-### Données
-- Récupération via l'API publique CoinCap. En cas d'indisponibilité réseau, un mode dégradé génère des données de démonstration.
+### Data
+- Sourced from the public CoinCap API. If the network is unavailable, a degraded mode generates demo data.
 
 ### Notes
-- L'app embarque Three.js via un composant HTML, aucune config JS séparée requise.
-- Ce projet est une base: libre à vous d'ajouter textures, shaders, et sources de données temps réel.
+- The app embeds Three.js via an HTML component; no separate JS build required.
+- This is a base you can extend with textures, shaders, and real-time data sources.
