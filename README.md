@@ -2,6 +2,10 @@
 
 Interface 3D immersive d'inspiration Tron/Cyberpunk pour visualiser l'activité crypto mondiale, intégrée dans Streamlit et propulsée par Three.js (embarqué via HTML).
 
+### Demo
+
+- Live: https://crypto-global-dashboard-3d.streamlit.app/
+
 ### Lancer localement
 
 1. Créez un environnement Python 3.10+ (recommandé)
