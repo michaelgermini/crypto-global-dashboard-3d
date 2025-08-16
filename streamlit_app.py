@@ -544,8 +544,18 @@ def build_three_globe_html(cities: list[dict], camera_distance: int = 420, auto_
 
                 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
                 renderer.setSize(container.clientWidth, container.clientHeight);
-                renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+                renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75));
                 renderer.setClearColor(0x000000, 0);
+                // Tone mapping / color space
+                if (THREE.ACESFilmicToneMapping) {
+                    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+                    renderer.toneMappingExposure = 1.0;
+                }
+                if (THREE.SRGBColorSpace) {
+                    renderer.outputColorSpace = THREE.SRGBColorSpace;
+                } else if (THREE.sRGBEncoding) {
+                    renderer.outputEncoding = THREE.sRGBEncoding;
+                }
                 container.appendChild(renderer.domElement);
 
                 let composer = null;
@@ -554,6 +564,10 @@ def build_three_globe_html(cities: list[dict], camera_distance: int = 420, auto_
                     const renderPass = new THREE.RenderPass(scene, camera);
                     composer.addPass(renderPass);
                     const bloomPass = new THREE.UnrealBloomPass(new THREE.Vector2(container.clientWidth, container.clientHeight), 0.6, 0.3, 0.2);
+                    // Fine-tune bloom
+                    bloomPass.threshold = 0.9;
+                    bloomPass.strength = 0.5;
+                    bloomPass.radius = 0.2;
                     composer.addPass(bloomPass);
                 }
 
@@ -576,21 +590,26 @@ def build_three_globe_html(cities: list[dict], camera_distance: int = 420, auto_
                 keyLight.position.set(200, 120, 220);
                 scene.add(keyLight);
 
-                // Starfield
-                const starGeo = new THREE.BufferGeometry();
-                const starCount = 2000;
-                const starPositions = new Float32Array(starCount * 3);
-                for (let i = 0; i < starCount; i++) {
-                    const r = 800 + Math.random() * 300;
-                    const phi = Math.acos(2 * Math.random() - 1);
-                    const theta = 2 * Math.PI * Math.random();
-                    starPositions[i*3] = r * Math.sin(phi) * Math.cos(theta);
-                    starPositions[i*3+1] = r * Math.cos(phi);
-                    starPositions[i*3+2] = r * Math.sin(phi) * Math.sin(theta);
+                // Starfield (dual layers)
+                const starCountNear = 1400;
+                const starCountFar = 2200;
+                function makeStars(count, radiusMin, radiusVar, size, color){
+                    const geo = new THREE.BufferGeometry();
+                    const positions = new Float32Array(count * 3);
+                    for (let i = 0; i < count; i++){
+                        const r = radiusMin + Math.random() * radiusVar;
+                        const phi = Math.acos(2 * Math.random() - 1);
+                        const theta = 2 * Math.PI * Math.random();
+                        positions[i*3] = r * Math.sin(phi) * Math.cos(theta);
+                        positions[i*3+1] = r * Math.cos(phi);
+                        positions[i*3+2] = r * Math.sin(phi) * Math.sin(theta);
+                    }
+                    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+                    const mat = new THREE.PointsMaterial({ color, size, sizeAttenuation: true, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending });
+                    return new THREE.Points(geo, mat);
                 }
-                starGeo.setAttribute('position', new THREE.BufferAttribute(starPositions, 3));
-                const starMat = new THREE.PointsMaterial({ color: 0x88c6ff, size: 0.7 });
-                scene.add(new THREE.Points(starGeo, starMat));
+                scene.add(makeStars(starCountFar, 950, 350, 0.6, 0x7fbfff));
+                scene.add(makeStars(starCountNear, 700, 200, 0.9, 0x9fd3ff));
 
                 // Globe and glow
                 const R = 160;
@@ -639,25 +658,42 @@ def build_three_globe_html(cities: list[dict], camera_distance: int = 420, auto_
                     scene.add(group);
                 })();
 
-                // Hub markers (meshes) + halos
-                const cityGroup = new THREE.Group();
-                scene.add(cityGroup);
-                const cityMeshes = [];
-                for (const c of CITIES) {
-                    const pos = latLonToVector3(c.lat, c.lon, R + 1.5);
-                    const g = new THREE.SphereGeometry(2.2, 16, 16);
-                    const m = new THREE.MeshPhongMaterial({ color: 0x00ff9c, emissive: 0x00ff9c, emissiveIntensity: 0.6 });
-                    const mesh = new THREE.Mesh(g, m);
-                    mesh.position.copy(pos);
-                    mesh.userData = c;
-                    cityGroup.add(mesh);
-                    cityMeshes.push(mesh);
-                    const sm = new THREE.SpriteMaterial({ color: 0x00ff9c, transparent: true, opacity: 0.65, blending: THREE.AdditiveBlending });
-                    const sprite = new THREE.Sprite(sm);
-                    sprite.scale.set(8, 8, 1);
-                    sprite.position.copy(pos.clone().multiplyScalar(1.01));
-                    cityGroup.add(sprite);
+                // Hub markers (instanced) — replaces per-mesh creation
+                const cityRadius = R + 1.5;
+                const cityGeo = new THREE.SphereGeometry(2.2, 16, 16);
+                const cityMat = new THREE.MeshPhongMaterial({ color: 0x00ff9c, emissive: 0x00ff9c, emissiveIntensity: 0.6 });
+                const cityMesh = new THREE.InstancedMesh(cityGeo, cityMat, CITIES.length);
+                const dummy = new THREE.Object3D();
+                for (let i = 0; i < CITIES.length; i++) {
+                    const c = CITIES[i];
+                    const pos = latLonToVector3(c.lat, c.lon, cityRadius);
+                    dummy.position.copy(pos);
+                    const vol = Math.max(1, Number(c.volume || 1));
+                    const scale = 0.85 + Math.min(1.5, Math.log10(vol) * 0.12);
+                    dummy.scale.setScalar(scale);
+                    dummy.lookAt(0,0,0);
+                    dummy.updateMatrix();
+                    cityMesh.setMatrixAt(i, dummy.matrix);
                 }
+                cityMesh.instanceMatrix.needsUpdate = true;
+                scene.add(cityMesh);
+                // Instanced halo layer (slightly larger spheres; additive basic material)
+                const haloMat = new THREE.MeshBasicMaterial({ color: 0x00ff9c, transparent: true, opacity: 0.35, blending: THREE.AdditiveBlending, depthWrite: false });
+                const haloGeo = new THREE.SphereGeometry(2.6, 10, 10);
+                const haloMesh = new THREE.InstancedMesh(haloGeo, haloMat, CITIES.length);
+                for (let i = 0; i < CITIES.length; i++) {
+                    const c = CITIES[i];
+                    const pos = latLonToVector3(c.lat, c.lon, cityRadius);
+                    dummy.position.copy(pos);
+                    const vol = Math.max(1, Number(c.volume || 1));
+                    const scale = 1.05 + Math.min(1.6, Math.log10(vol) * 0.10);
+                    dummy.scale.setScalar(scale);
+                    dummy.lookAt(0,0,0);
+                    dummy.updateMatrix();
+                    haloMesh.setMatrixAt(i, dummy.matrix);
+                }
+                haloMesh.instanceMatrix.needsUpdate = true;
+                scene.add(haloMesh);
 
                 // Extra points (Points cloud) with tooltips
                 const extraPositions = new Float32Array(EXTRAS.length * 3);
@@ -672,27 +708,42 @@ def build_three_globe_html(cities: list[dict], camera_distance: int = 420, auto_
                 const extrasPoints = new THREE.Points(extrasGeo, extrasMat);
                 scene.add(extrasPoints);
 
-                // Links and moving dots
-                const movingDots = [];
+                // Great-circle (geodesic) link builder
                 function makeLink(a, b) {
-                    const p1 = latLonToVector3(a.lat, a.lon, R + 1);
-                    const p2 = latLonToVector3(b.lat, b.lon, R + 1);
+                    const r = R + 1;
+                    // unit vectors
+                    function latLonToUnit(lat, lon){
+                        const phi = (90 - lat) * (Math.PI / 180);
+                        const theta = (lon + 180) * (Math.PI / 180);
+                        const x = -Math.sin(phi) * Math.cos(theta);
+                        const y =  Math.cos(phi);
+                        const z =  Math.sin(phi) * Math.sin(theta);
+                        return new THREE.Vector3(x,y,z).normalize();
+                    }
+                    const u = latLonToUnit(a.lat, a.lon);
+                    const v = latLonToUnit(b.lat, b.lon);
+                    const omega = Math.acos(Math.min(1, Math.max(-1, u.dot(v))));
+                    const sinOmega = Math.max(1e-6, Math.sin(omega));
                     const points = [];
-                    for (let i = 0; i <= 40; i++) {
-                        const t = i / 40;
-                        const x = p1.x * (1-t) + p2.x * t;
-                        const y = p1.y * (1-t) + p2.y * t + Math.sin(Math.PI * t) * 22;
-                        const z = p1.z * (1-t) + p2.z * t;
-                        points.push(new THREE.Vector3(x, y, z));
+                    for (let i = 0; i <= 80; i++) {
+                        const t = i / 80;
+                        const s1 = Math.sin((1 - t) * omega) / sinOmega;
+                        const s2 = Math.sin(t * omega) / sinOmega;
+                        const p = new THREE.Vector3(
+                            u.x * s1 + v.x * s2,
+                            u.y * s1 + v.y * s2,
+                            u.z * s1 + v.z * s2,
+                        ).normalize();
+                        // arc height bump
+                        const h = Math.sin(Math.PI * t) * 22;
+                        p.multiplyScalar(r + h);
+                        points.push(p);
                     }
                     const curve = new THREE.CatmullRomCurve3(points);
-                    const geo = new THREE.TubeGeometry(curve, 80, 0.6, 8, false);
-                    const mat = new THREE.MeshBasicMaterial({ color: 0x00e5ff, transparent: true, opacity: 0.35 });
+                    const geo = new THREE.TubeGeometry(curve, 160, 0.6, 8, false);
+                    const mat = new THREE.MeshBasicMaterial({ color: PRIMARY, transparent: true, opacity: 0.35 });
                     const tube = new THREE.Mesh(geo, mat);
                     scene.add(tube);
-                    const mover = new THREE.Mesh(new THREE.SphereGeometry(1.1, 10, 10), new THREE.MeshBasicMaterial({ color: 0x14f1d9 }));
-                    scene.add(mover);
-                    movingDots.push({ curve, mesh: mover, speed: 0.05 + Math.random() * 0.05, offset: Math.random() });
                     return tube;
                 }
 
@@ -704,16 +755,19 @@ def build_three_globe_html(cities: list[dict], camera_distance: int = 420, auto_
                     }
                 }
 
-                // Raycaster for hub meshes and extra points
+                // Raycaster for hub instances and extra points (throttled)
                 const raycaster = new THREE.Raycaster();
                 raycaster.params.Points = { threshold: 6 };
                 const mouse = new THREE.Vector2();
-                let lastClientX = 0; let lastClientY = 0;
+                let lastClientX = 0;
+                let lastClientY = 0;
+                let frameCounter = 0;
                 renderer.domElement.addEventListener('mousemove', (e) => {
                     const rect = renderer.domElement.getBoundingClientRect();
                     mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
                     mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
-                    lastClientX = e.clientX; lastClientY = e.clientY;
+                    lastClientX = e.clientX;
+                    lastClientY = e.clientY;
                 });
                 renderer.domElement.addEventListener('mouseleave', () => { tooltip.style.opacity = 0; });
 
@@ -722,32 +776,47 @@ def build_three_globe_html(cities: list[dict], camera_distance: int = 420, auto_
                     requestAnimationFrame(animate);
                     controls && controls.update && controls.update();
                     if (AUTO_ROTATE) { globe.rotation.y += 0.0006 * ROTATE_SPEED; }
-                    cityGroup.children.forEach((m, idx) => { if (m.isMesh) m.scale.setScalar(0.9 + 0.12 * Math.sin(t * 2 + idx)); });
+                    // link opacity pulse
                     links.forEach((l, i) => { l.material.opacity = 0.25 + 0.15 * Math.sin(t * 2 + i); });
-                    movingDots.forEach((d) => { const u = ((t * d.speed) + d.offset) % 1; const p = d.curve.getPointAt(u); d.mesh.position.copy(p); });
 
-                    raycaster.setFromCamera(mouse, camera);
-                    const intersects = raycaster.intersectObjects([...cityMeshes, extrasPoints], true);
-                    if (intersects.length > 0) {
-                        const it = intersects[0];
-                        let data = null;
-                        if (it.object === extrasPoints && typeof it.index === 'number') {
-                            data = EXTRAS[it.index];
-                        } else if (it.object.userData) {
-                            data = it.object.userData;
-                        }
-                        if (data) {
+                    // Throttled hover
+                    if ((frameCounter++ % 2) === 0) {
+                        raycaster.setFromCamera(mouse, camera);
+                        const hits = [];
+                        // Instanced hubs
+                        const instHits = raycaster.intersectObject(cityMesh, true);
+                        if (instHits.length > 0 && typeof instHits[0].instanceId === 'number') {
+                            const idx = instHits[0].instanceId;
+                            const hit = CITIES[idx];
                             tooltip.style.opacity = 1;
                             tooltip.style.left = (lastClientX + 14) + 'px';
                             tooltip.style.top = (lastClientY + 14) + 'px';
                             tooltip.innerHTML = `
-                                <div><strong>${data.name || 'Node'}</strong><span class=\"badge\">${data.region || 'Global'}</span></div>
-                                <div>Volume: $${Number(data.volume || 0).toLocaleString()}</div>
-                                <div>Top: ${data.top || ''}</div>
-                                <div>Tendance: <span style=\"color:${(data.trend || 0) > 0 ? '#00ff9c' : '#ff5b6b'}\">${(data.trend || 0) > 0 ? '+' : ''}${Number(data.trend || 0).toFixed(2)}%</span></div>
+                                <div><strong>${hit.name}</strong><span class=\"badge\">${hit.region}</span></div>
+                                <div>Volume: $${Number(hit.volume).toLocaleString()}</div>
+                                <div>Top: ${hit.top}</div>
+                                <div>Tendance: <span style=\"color:${hit.trend > 0 ? '#00ff9c' : '#ff5b6b'}\">${hit.trend > 0 ? '+' : ''}${hit.trend.toFixed(2)}%</span></div>
                             `;
+                        } else if (typeof extrasPoints !== 'undefined') {
+                            const extraHits = raycaster.intersectObject(extrasPoints, true);
+                            if (extraHits.length > 0 && typeof extraHits[0].index === 'number' && EXTRAS && EXTRAS.length) {
+                                const data = EXTRAS[extraHits[0].index];
+                                tooltip.style.opacity = 1;
+                                tooltip.style.left = (lastClientX + 14) + 'px';
+                                tooltip.style.top = (lastClientY + 14) + 'px';
+                                tooltip.innerHTML = `
+                                    <div><strong>${data.name || 'Node'}</strong><span class=\"badge\">${data.region || 'Global'}</span></div>
+                                    <div>Volume: $${Number(data.volume || 0).toLocaleString()}</div>
+                                    <div>Top: ${data.top || ''}</div>
+                                    <div>Tendance: <span style=\"color:${(data.trend || 0) > 0 ? '#00ff9c' : '#ff5b6b'}\">${(data.trend || 0) > 0 ? '+' : ''}${Number(data.trend || 0).toFixed(2)}%</span></div>
+                                `;
+                            } else {
+                                tooltip.style.opacity = 0;
+                            }
+                        } else {
+                            tooltip.style.opacity = 0;
                         }
-                    } else { tooltip.style.opacity = 0; }
+                    }
 
                     if (composer){ composer.render(); } else { renderer.render(scene, camera); }
                     t += 0.01;
@@ -759,6 +828,17 @@ def build_three_globe_html(cities: list[dict], camera_distance: int = 420, auto_
                     renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix();
                 }
                 window.addEventListener('resize', onResize);
+
+                // Pause/resume auto-rotate on interaction
+                let autoRotateResumeTimer = null;
+                function pauseAutoRotate(){
+                    if (controls) controls.autoRotate = false;
+                    if (autoRotateResumeTimer) clearTimeout(autoRotateResumeTimer);
+                    autoRotateResumeTimer = setTimeout(()=>{ if (AUTO_ROTATE && controls) controls.autoRotate = true; }, 3000);
+                }
+                renderer.domElement.addEventListener('pointerdown', pauseAutoRotate);
+                renderer.domElement.addEventListener('wheel', pauseAutoRotate, { passive: true });
+                renderer.domElement.addEventListener('touchstart', pauseAutoRotate, { passive: true });
             } catch (err) { console.error('Erreur globe 3D:', err); errorOverlay.style.display = 'flex'; }
         })();
         </script>
